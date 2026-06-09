@@ -34,6 +34,7 @@ Wick.Layer = class extends Wick.Base {
         this.hidden = args.hidden === undefined ? false : args.hidden;
         this.opacity = args.opacity === undefined ? 1 : args.opacity;
         this.name = args.name || null;
+        this.isMask = args.isMask === undefined ? false : args.isMask; // Mask thing added
     }
 
     _serialize (args) {
