@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 WICKLETS LLC + Grok Enhancements for Candlestick
+ * Copyright 2020 WICKLETS LLC + Enhancements for Candlestick
  *
  * This file is part of Wick Engine.
  *
