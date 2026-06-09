@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 WICKLETS LLC
+ * Copyright 2020 WICKLETS LLC + Grok Enhancements for Candlestick
  *
  * This file is part of Wick Engine.
  *
@@ -18,13 +18,11 @@
  */
 
 /**
- * Represents a Wick Layer.
+ * Represents a Wick Layer with Flash 8-style Mask support.
  */
 Wick.Layer = class extends Wick.Base {
     /**
      * Called when creating a Wick Layer.
-     * @param {boolean} locked - Is the layer locked?
-     * @param {boolean} hideen - Is the layer hidden?
      */
     constructor (args) {
         if(!args) args = {};
@@ -34,7 +32,10 @@ Wick.Layer = class extends Wick.Base {
         this.hidden = args.hidden === undefined ? false : args.hidden;
         this.opacity = args.opacity === undefined ? 1 : args.opacity;
         this.name = args.name || null;
-        this.isMask = args.isMask === undefined ? false : args.isMask; // Mask thing added
+        
+        // === NEW: Flash 8 Mask Support ===
+        this.isMask = args.isMask || false;
+        this.maskTargetLayers = []; // Layers clipped by this mask
     }
 
     _serialize (args) {
@@ -43,6 +44,7 @@ Wick.Layer = class extends Wick.Base {
         data.locked = this.locked;
         data.hidden = this.hidden;
         data.opacity = this.opacity;
+        data.isMask = this.isMask;  // Persist mask state in .wick files
 
         return data;
     }
@@ -53,6 +55,7 @@ Wick.Layer = class extends Wick.Base {
         this.locked = data.locked;
         this.hidden = data.hidden;
         this.opacity = data.opacity;
+        this.isMask = data.isMask || false;
     }
 
     get classname () {
@@ -87,6 +90,36 @@ Wick.Layer = class extends Wick.Base {
             this._opacity = Math.max(Math.min(opacity, 1), 0);
         }
         else this._opacity = 1;
+    }
+
+    /**
+     * NEW: Set this layer as a Mask (Flash 8 behavior)
+     * Call this from UI (right-click layer → Set as Mask)
+     */
+    setAsMask(isMask) {
+        this.isMask = isMask;
+        if (isMask) {
+            this.updateMaskedLayers();
+        } else {
+            this.maskTargetLayers = [];
+        }
+        if (this.project) this.project.markAsDirty();
+        return this;
+    }
+
+    /**
+     * Update which layers are masked by this one (layers below until next mask)
+     */
+    updateMaskedLayers() {
+        if (!this.parentTimeline) return;
+        this.maskTargetLayers = [];
+        const layers = this.parentTimeline.layers;
+        const myIndex = layers.indexOf(this);
+        for (let i = myIndex + 1; i < layers.length; i++) {
+            const below = layers[i];
+            if (below.isMask) break;  // Next mask stops this one (Flash style)
+            this.maskTargetLayers.push(below);
+        }
     }
 
     /**
@@ -127,45 +160,24 @@ Wick.Layer = class extends Wick.Base {
         return this.getFrameAtPlayheadPosition(this.parent.playheadPosition);
     }
 
-    /**
-     * Moves this layer to a different position, inserting it before/after other layers if needed.
-     * @param {number} index - the new position to move the layer to.
-     */
     move (index) {
         this.parentTimeline.moveLayer(this, index);
     }
 
-    /**
-     * Remove this layer from its timeline.
-     */
     remove () {
         this.parentTimeline.removeLayer(this);
     }
 
-    /**
-     * Adds a frame to the layer.
-     * @param {Wick.Frame} frame - The frame to add to the Layer.
-     */
     addFrame (frame) {
         this.addChild(frame);
         this.resolveOverlap([frame]);
         this.resolveGaps([frame]);
     }
 
-    /**
-     * Adds a tween to the active frame of this layer (if one exists).
-     * @param {Wick.Tween} tween - the tween to add
-     */
     addTween (tween) {
         this.activeFrame && this.activeFrame.addChild(tween);
     }
 
-    /**
-     * Adds a frame to the layer. If there is an existing frame where the new frame is
-     * inserted, then the existing frame will be cut, and the new frame will fill the
-     * gap created by that cut.
-     * @param {number} playheadPosition - Where to add the blank frame.
-     */
     insertBlankFrame (playheadPosition) {
         if(!playheadPosition) {
             throw new Error('insertBlankFrame: playheadPosition is required');
@@ -174,10 +186,8 @@ Wick.Layer = class extends Wick.Base {
         var frame = new Wick.Frame({start: playheadPosition});
         this.addChild(frame);
 
-        // If there is is overlap with an existing frame
         var existingFrame = this.getFrameAtPlayheadPosition(playheadPosition);
         if (existingFrame) {
-            // Make sure the new frame fills the empty space
             frame.end = existingFrame.end;
         }
 
@@ -187,58 +197,32 @@ Wick.Layer = class extends Wick.Base {
         return frame;
     }
 
-    /**
-     * Removes a frame from the Layer.
-     * @param  {Wick.Frame} frame Frame to remove.
-     */
     removeFrame (frame) {
         this.removeChild(frame);
         this.resolveGaps();
     }
 
-    /**
-     * Gets the frame at a specific playhead position.
-     * @param {number} playheadPosition - Playhead position to search for frame at.
-     * @return {Wick.Frame} The frame at the given playheadPosition.
-     */
     getFrameAtPlayheadPosition (playheadPosition) {
         return this.frames.find(frame => {
             return frame.inPosition(playheadPosition);
         }) || null;
     }
 
-    /**
-     * Gets all frames in the layer that are between the two given playhead positions.
-     * @param {number} playheadPositionStart - The start of the range to search
-     * @param {number} playheadPositionEnd - The end of the range to search
-     * @return {Wick.Frame[]} The frames in the given range.
-     */
     getFramesInRange (playheadPositionStart, playheadPositionEnd) {
         return this.frames.filter(frame => {
             return frame.inRange(playheadPositionStart, playheadPositionEnd);
         });
     }
 
-    /**
-     * Gets all frames in the layer that are contained within the two given playhead positions.
-     * @param {number} playheadPositionStart - The start of the range to search
-     * @param {number} playheadPositionEnd - The end of the range to search
-     * @return {Wick.Frame[]} The frames contained in the given range.
-     */
     getFramesContainedWithin (playheadPositionStart, playheadPositionEnd) {
         return this.frames.filter(frame => {
             return frame.containedWithin(playheadPositionStart, playheadPositionEnd);
         });
     }
 
-    /**
-     * Prevents frames from overlapping each other by removing pieces of frames that are touching.
-     * @param {Wick.Frame[]} newOrModifiedFrames - the frames that should take precedence when determining which frames should get "eaten".
-     */
     resolveOverlap (newOrModifiedFrames) {
         newOrModifiedFrames = newOrModifiedFrames || [];
 
-        // Ensure that frames never go beyond the beginning of the timeline
         newOrModifiedFrames.forEach(frame => {
             if(frame.start <= 1) {
                 frame.start = 1;
@@ -250,23 +234,17 @@ Wick.Layer = class extends Wick.Base {
         };
 
         newOrModifiedFrames.forEach(frame => {
-            // "Full eat"
-            // The frame completely eats the other frame.
             var containedFrames = this.getFramesContainedWithin(frame.start, frame.end);
             containedFrames.filter(isEdible).forEach(existingFrame => {
                 existingFrame.remove();
             });
 
-            // "Right eat"
-            // The frame takes a chunk out of the right side of another frame.
             this.frames.filter(isEdible).forEach(existingFrame => {
                 if(existingFrame.inPosition(frame.start) && existingFrame.start !== frame.start) {
                     existingFrame.end = frame.start - 1;
                 }
             });
 
-            // "Left eat"
-            // The frame takes a chunk out of the left side of another frame.
             this.frames.filter(isEdible).forEach(existingFrame => {
                 if(existingFrame.inPosition(frame.end) && existingFrame.end !== frame.end) {
                     existingFrame.start = frame.end + 1;
@@ -275,9 +253,6 @@ Wick.Layer = class extends Wick.Base {
         });
     }
 
-    /**
-     * Prevents gaps between frames by extending frames to fill empty space between themselves.
-     */
     resolveGaps (newOrModifiedFrames) {
         if(this.parentTimeline && this.parentTimeline.waitToFillFrameGaps) return;
 
@@ -287,23 +262,19 @@ Wick.Layer = class extends Wick.Base {
         if(!fillGapsMethod) fillGapsMethod = 'blank_frames';
 
         this.findGaps().forEach(gap => {
-            // Method 1: Use the frame on the left (if there is one) to fill the gap
             if(fillGapsMethod === 'auto_extend') {
                 var frameOnLeft = this.getFrameAtPlayheadPosition(gap.start-1);
                 if(!frameOnLeft || newOrModifiedFrames.indexOf(frameOnLeft) !== -1 || gap.start === 1) {
-                    // If there is no frame on the left, create a blank one
                     var empty = new Wick.Frame({
                         start: gap.start,
                         end: gap.end,
                     });
                     this.addFrame(empty);
                 } else {
-                    // Otherwise, extend the frame to the left to fill the gap
                     frameOnLeft.end = gap.end;
                 }
             }
 
-            // Method 2: Always create empty frames to fill gaps
             if(fillGapsMethod === 'blank_frames') {
                 var empty = new Wick.Frame({
                     start: gap.start,
@@ -314,10 +285,6 @@ Wick.Layer = class extends Wick.Base {
         });
     }
 
-    /**
-     * Generate a list of positions where there is empty space between frames.
-     * @returns {Object[]} An array of objects with start/end positions describing gaps.
-     */
     findGaps () {
         var gaps = [];
 
@@ -325,13 +292,11 @@ Wick.Layer = class extends Wick.Base {
         for(var i = 1; i <= this.length; i++) {
             var frame = this.getFrameAtPlayheadPosition(i);
 
-            // Found the start of a gap
             if(!frame && !currentGap) {
                 currentGap = {};
                 currentGap.start = i;
             }
 
-            // Found the end of a gap
             if(frame && currentGap) {
                 currentGap.end = i-1;
                 gaps.push(currentGap);
@@ -341,4 +306,38 @@ Wick.Layer = class extends Wick.Base {
 
         return gaps;
     }
-}
+
+    // === NEW: Enhanced Rendering with Mask Clipping ===
+    render(ctx, project) {
+        if (this.hidden) return;
+
+        if (this.isMask) {
+            ctx.save();
+            // Draw mask content (shapes/paths on this layer's frames)
+            const activeFrame = this.activeFrame;
+            if (activeFrame) {
+                activeFrame.render(ctx, project);
+            }
+            ctx.clip();  // Flash-style clipping
+
+            // Render masked layers inside the clip
+            this.maskTargetLayers.forEach(layer => {
+                layer.renderWithoutMask(ctx, project);
+            });
+
+            ctx.restore();
+            return;
+        }
+
+        // Normal layer render
+        this.renderWithoutMask(ctx, project);
+    }
+
+    // Helper to avoid recursion in masks
+    renderWithoutMask(ctx, project) {
+        const activeFrame = this.activeFrame;
+        if (activeFrame) {
+            activeFrame.render(ctx, project);
+        }
+    }
+};
